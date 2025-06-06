@@ -6,8 +6,8 @@
 
 /*
   Fuels version: 0.101.1
-  Forc version: 0.68.2
-  Fuel-Core version: 0.43.2
+  Forc version: 0.68.1
+  Fuel-Core version: 0.43.1
 */
 
 import {
@@ -21,10 +21,10 @@ import {
 } from 'fuels';
 
 export type PredicateTestConfigurables = Partial<{
-    SECRET_NUMBER: BigNumberish;
+    SIGNER: string;
 }>;
 
-export type PredicateTestInputs = [secret: BigNumberish];
+export type PredicateTestInputs = [witness_index: BigNumberish];
 
 export type PredicateTestParameters = Omit<
   PredicateParams<PredicateTestInputs, PredicateTestConfigurables>,
@@ -36,6 +36,10 @@ const abi = {
   "specVersion": "1",
   "encodingVersion": "1",
   "concreteTypes": [
+    {
+      "type": "b256",
+      "concreteTypeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+    },
     {
       "type": "bool",
       "concreteTypeId": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
@@ -50,7 +54,7 @@ const abi = {
     {
       "inputs": [
         {
-          "name": "secret",
+          "name": "witness_index",
           "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
         }
       ],
@@ -63,14 +67,14 @@ const abi = {
   "messagesTypes": [],
   "configurables": [
     {
-      "name": "SECRET_NUMBER",
-      "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0",
-      "offset": 384
+      "name": "SIGNER",
+      "concreteTypeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "offset": 8624
     }
   ]
 };
 
-const bytecode = decompressBytecode('H4sIAAAAAAAAA3WQT0rDQBTGv4nBDig4EFfPRWfRhbgqiK4TYmhaLczSTSg9gkG6zhUU/LP0CD1Cj+ARZuFGqtCFQksX8SUxlLb0wfCGN9/vN/Bo1sY94KIskdU9ySdC5TkeAGmmM5gP7taHnp/jdmkds7Qucyf0ZcrMnY+9YeTA6yqMYuynMRwvOs5GVxCXbBwGTo/zgvvh4Bug6XjTpSl8B33yZX1+VsxbPvAEHD1LZqs/FYVvoE4GurbY4TwoWH4TJhzL9AbyNHIn9AM8FvxC45V9L+ztzUt/s/ZXboukCz4aSR9IDaTqX2AQtEG/GrRQNd/85xtbfOzDC1qc5/kq3yjynWrZZf0BtXaf/ogBAAA=');
+const bytecode = decompressBytecode('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');
 
 export class PredicateTest extends __Predicate<
   PredicateTestInputs,

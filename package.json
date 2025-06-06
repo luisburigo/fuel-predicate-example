@@ -9,6 +9,10 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "fuels": "^0.101.1"
+    "@ethereumjs/util": "9.0.3",
+    "@ethersproject/bytes": "5.7.0",
+    "ethers": "^6.14.3",
+    "fuels": "^0.101.1",
+    "viem": "^2.30.6"
   }
 }

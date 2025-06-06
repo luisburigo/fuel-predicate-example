@@ -6,8 +6,8 @@
 
 /*
   Fuels version: 0.101.1
-  Forc version: 0.68.2
-  Fuel-Core version: 0.43.2
+  Forc version: 0.68.1
+  Fuel-Core version: 0.43.1
 */
 
 export { ScriptTest } from './ScriptTest';
