@@ -1,11 +1,13 @@
 import { launchTestNode } from 'fuels/test-utils';
 import { ScriptTest } from "./artifacts";
 import { ethers, hashMessage, recoverAddress } from 'ethers';
-import {Address, arrayify, bn, type BytesLike, concat, hexlify, type ScriptTransactionRequest} from 'fuels';
+import {Address, arrayify, bn, type BytesLike, concat, hexlify, type ScriptTransactionRequest, Wallet, WalletUnlocked} from 'fuels';
 import { splitSignature } from '@ethersproject/bytes';
 import { hexToBytes } from '@ethereumjs/util';
 import { stringToBytes, stringToHex } from 'viem';
 import type { HDNodeWallet } from 'ethers';
+import { SignatureType } from './coders/coders';
+import { bakoCoder } from './coders/coders';
 
 export const getMockedSignatureIndex = (witnesses: BytesLike[]) => {
     const placeholderWitnessIndex = witnesses.findIndex(
@@ -24,44 +26,82 @@ const encodeTxIdUtf8 = (txId: string): string => {
     return stringToHex(txIdNo0x);
 };
 
-const signTransaction = async (wallet: HDNodeWallet, request: ScriptTransactionRequest, chainID: number) => {
+const signTransactionEVM = async (wallet: HDNodeWallet, request: ScriptTransactionRequest, chainID: number) => {
     const txId = request.getTransactionId(chainID);
     const message = encodeTxIdUtf8(txId);
     const signature = await wallet.signMessage(arrayify(message));
-    const compactSignature = splitSignature(hexToBytes(signature)).compact;
-    request.witnesses[0] = compactSignature;
+    const compactSignature = bakoCoder.encode({
+        type: SignatureType.EVM,
+        signature,
+    });
+    request.witnesses.push(compactSignature);
+    return request;
+}
+
+const signTransactionFUEL = async (wallet: WalletUnlocked, request: ScriptTransactionRequest) => {
+    const signature = await wallet.signTransaction(request);
+    const compactSignature = bakoCoder.encode({
+        type: SignatureType.Fuel,
+        signature,
+    });
+    request.witnesses.push(compactSignature);
     return request;
 }
 
 try {
-    using node = await launchTestNode();
+    using node = await launchTestNode({
+        walletsConfig: {
+            amountPerCoin: bn(1_000_000_000)
+        }
+    });
     const {wallets: [wallet], provider} = node;
 
     const chainID = await provider.getChainId();
     const evmWallet = ethers.Wallet.createRandom();
+
+    const balance = await wallet.getBalance();
+    console.log(balance.toString());
+
     const evmWalletAddress = new Address(evmWallet.address).toString();
+    const fuelWalletAddress = wallet.address.toString();
 
     const scriptTest = new ScriptTest(wallet);
     scriptTest.setConfigurableConstants({
-        SIGNER: evmWalletAddress
+        SIGNER: [evmWalletAddress, fuelWalletAddress]
     });
 
-    let request = await scriptTest.functions.main(0).getTransactionRequest();
-    request.witnesses[0] = new Uint8Array(64); 
-    
-    const { assembledRequest } = await provider.assembleTx({
-        request,
-        feePayerAccount: wallet,
-        reserveGas: bn(10000)
-      });
+    let request = await scriptTest.functions.main().getTransactionRequest();
+    request.witnesses = [];
+    request.witnesses[0] = hexlify(new Uint8Array(32).fill(1));
 
-    request = await provider.estimatePredicates(assembledRequest);
-    request = await signTransaction(evmWallet, request, chainID);
 
-    const response = await wallet.sendTransaction(request);
-    const result = await response.waitForResult();
+    // await wallet.getTransactionCost(request, {
+    //     signatureCallback: async (request) => {
+    //         await signTransactionEVM(evmWallet, request, chainID);
+    //         await signTransactionFUEL(wallet, request);
+    //         return request;
+    //     }
+    // });
 
-    console.dir(result?.logs, {depth: null});
+    // request.maxFee = bn(0);
+    // request.gasLimit = bn(0);
+
+    // const resources = await wallet.getResourcesToSpend([
+    //     {amount: bn(900_000_000), assetId: await provider.getBaseAssetId()}
+    // ]);
+    // request.addResources(resources);
+
+    // const { assembledRequest } = await provider.assembleTx({
+    //     request,
+    //     feePayerAccount: wallet,
+    // });
+
+    // console.log(assembledRequest);
+
+    // const response = await wallet.sendTransaction(request);
+    // const result = await response.waitForResult();
+
+    // console.dir(result?.logs, {depth: null});
 } catch (e) {
     console.log(e.message);
 }

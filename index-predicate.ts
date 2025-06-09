@@ -1,10 +1,10 @@
 import { launchTestNode } from 'fuels/test-utils';
-import { PredicateTest, ScriptTest } from "./artifacts";
-import { ethers, hashMessage, recoverAddress } from 'ethers';
-import {Address, arrayify, BN, bn, calculateGasFee, type BytesLike, concat, hexlify, Provider, ScriptTransactionRequest, transactionRequestify, ZeroBytes32} from 'fuels';
+import { PredicateTest } from "./artifacts";
+import { ethers } from 'ethers';
+import {Address, arrayify, BN, bn, calculateGasFee, type BytesLike, concat, Provider, ScriptTransactionRequest, transactionRequestify, ZeroBytes32} from 'fuels';
 import { splitSignature } from '@ethersproject/bytes';
 import { hexToBytes } from '@ethereumjs/util';
-import { stringToBytes, stringToHex } from 'viem';
+import { stringToHex } from 'viem';
 import type { HDNodeWallet } from 'ethers';
 
 export const getMockedSignatureIndex = (witnesses: BytesLike[]) => {
@@ -28,8 +28,10 @@ const signTransaction = async (wallet: HDNodeWallet, request: ScriptTransactionR
     const txId = request.getTransactionId(chainID);
     const message = encodeTxIdUtf8(txId);
     const signature = await wallet.signMessage(arrayify(message));
+
     const compactSignature = splitSignature(hexToBytes(signature)).compact;
     request.witnesses[0] = compactSignature;
+    
     return request;
 }
 
@@ -74,15 +76,15 @@ try {
     transaction = await signTransaction(evmWallet, transaction, chainID);
     transaction = await provider.estimatePredicates(transaction);
 
-    // Send the transaction
-    const response = await evmPredicate.sendTransaction(transaction);
-    const result = await response.waitForResult();
 
-    console.log("TX executed:", result.id);
+    // // Send the transaction
+    // const response = await evmPredicate.sendTransaction(transaction);
+    // const result = await response.waitForResult();
+
+    // console.log("TX executed:", result.id);
 } catch (e) {
     console.log(e.message);
 }
-
 
 async function prepareTransaction(
     transaction: ScriptTransactionRequest,
@@ -146,8 +148,7 @@ async function prepareTransaction(
       transactionId: requestWithPredicateAttached.getTransactionId(chainId),
       transactionRequest,
     };
-  }
-
+}
 
 async function getMaxPredicateGasUsed(provider: Provider): Promise<BN> {
 const fakeAccount = ethers.Wallet.createRandom();

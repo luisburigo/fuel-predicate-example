@@ -48,6 +48,7 @@ fn main(witness_index: u64) -> bool {
     let message = Message::from(personal_sign_hash(tx_id()));
 
     let result = signature.verify_evm_address(EvmAddress::from(SIGNER), message);
+    let evm_address = signature.evm_address(message);
     
     if result.is_ok() {
         return true;
