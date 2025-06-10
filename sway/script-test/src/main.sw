@@ -70,11 +70,11 @@ pub fn verify_prefix(witness_ptr: raw_ptr) -> bool {
 }
 
 fn main() -> bool {
+    let tx_witnesses_count = tx_witnesses_count();
     let mut count = 0;
-
     let mut valid_signers = 0;
 
-    while count < tx_witnesses_count() {
+    while count < tx_witnesses_count {
         let mut witness_ptr = __gtf::<raw_ptr>(count, GTF_WITNESS_DATA);
 
         if (verify_prefix(witness_ptr)) {
@@ -106,8 +106,10 @@ fn main() -> bool {
             }
         }
 
+        count += 1;
     }
 
+    log(valid_signers == 2);
     valid_signers == 2
 }
 

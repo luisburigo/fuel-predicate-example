@@ -34,17 +34,18 @@ const signTransactionEVM = async (wallet: HDNodeWallet, request: ScriptTransacti
         type: SignatureType.EVM,
         signature,
     });
-    request.witnesses.push(compactSignature);
+    request.addWitness(compactSignature);
     return request;
 }
 
-const signTransactionFUEL = async (wallet: WalletUnlocked, request: ScriptTransactionRequest) => {
-    const signature = await wallet.signTransaction(request);
+const signTransactionFUEL = async (wallet: WalletUnlocked, request: ScriptTransactionRequest, chainID: number) => {
+    const txId = request.getTransactionId(chainID);
+    const signature = await wallet.signMessage(txId.slice(2));
     const compactSignature = bakoCoder.encode({
         type: SignatureType.Fuel,
         signature,
     });
-    request.witnesses.push(compactSignature);
+    request.addWitness(compactSignature);
     return request;
 }
 
@@ -59,49 +60,35 @@ try {
     const chainID = await provider.getChainId();
     const evmWallet = ethers.Wallet.createRandom();
 
-    const balance = await wallet.getBalance();
-    console.log(balance.toString());
-
     const evmWalletAddress = new Address(evmWallet.address).toString();
     const fuelWalletAddress = wallet.address.toString();
 
-    const scriptTest = new ScriptTest(wallet);
+    let scriptTest = new ScriptTest(wallet);
     scriptTest.setConfigurableConstants({
         SIGNER: [evmWalletAddress, fuelWalletAddress]
     });
 
     let request = await scriptTest.functions.main().getTransactionRequest();
-    request.witnesses = [];
-    request.witnesses[0] = hexlify(new Uint8Array(32).fill(1));
+    request.addWitness(hexlify(new Uint8Array(64).fill(1)));
+    request.addWitness(hexlify(new Uint8Array(64).fill(1)));
 
+    const { assembledRequest } = await provider.assembleTx({
+        request,
+        feePayerAccount: wallet,
+        reserveGas: bn(100_000)
+      });
 
-    // await wallet.getTransactionCost(request, {
-    //     signatureCallback: async (request) => {
-    //         await signTransactionEVM(evmWallet, request, chainID);
-    //         await signTransactionFUEL(wallet, request);
-    //         return request;
-    //     }
-    // });
+    request = assembledRequest;
 
-    // request.maxFee = bn(0);
-    // request.gasLimit = bn(0);
+    request = await signTransactionEVM(evmWallet, request, chainID);
+    request = await signTransactionFUEL(wallet, request, chainID);
 
-    // const resources = await wallet.getResourcesToSpend([
-    //     {amount: bn(900_000_000), assetId: await provider.getBaseAssetId()}
-    // ]);
-    // request.addResources(resources);
+    await provider.estimatePredicates(request);
 
-    // const { assembledRequest } = await provider.assembleTx({
-    //     request,
-    //     feePayerAccount: wallet,
-    // });
+    const response = await wallet.sendTransaction(request);
+    const result = await response.waitForResult();
 
-    // console.log(assembledRequest);
-
-    // const response = await wallet.sendTransaction(request);
-    // const result = await response.waitForResult();
-
-    // console.dir(result?.logs, {depth: null});
+    console.log("Is valid:", result?.logs?.[0]);
 } catch (e) {
-    console.log(e.message);
+    console.error(e);
 }

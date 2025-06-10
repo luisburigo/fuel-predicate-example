@@ -1,5 +1,7 @@
 predicate;
 
+use std::ecr::ec_recover_address;
+use std::{b512::B512, tx::{GTF_WITNESS_DATA, tx_id, tx_witnesses_count}};
 use std::{
     crypto:: {
         signature::Signature,
@@ -7,10 +9,8 @@ use std::{
         public_key::PublicKey,
         secp256k1::Secp256k1
     },
-    b512::B512,
     bytes::Bytes,
     tx::{
-        tx_id,
         tx_witness_data,
     },
     vm::evm::{
@@ -38,28 +38,139 @@ struct SignedData {
 
 configurable {
     /// The Ethereum address that signed the transaction.
-    SIGNER: b256 = b256::zero(),
+    SIGNER: [b256; 2] = [b256::zero(), b256::zero()],
 }
 
-fn main(witness_index: u64) -> bool {
-    let witness_signature: B512 = tx_witness_data(witness_index).unwrap();
+pub struct Header {
+    pub signature: B512,
+}
 
-    let signature = Signature::Secp256k1(Secp256k1::from(witness_signature));
-    let message = Message::from(personal_sign_hash(tx_id()));
+enum SignatureType {
+    FUEL: Header,
+    EVM: Header,
+}
 
-    let result = signature.verify_evm_address(EvmAddress::from(SIGNER), message);
-    let evm_address = signature.evm_address(message);
-    
-    if result.is_ok() {
-        return true;
+enum SignatureAddress {
+    FUEL: Address,
+    EVM: EvmAddress,
+}
+
+pub const PREFIX_BAKO_SIG: [u8; 4] = [66, 65, 75, 79];
+
+pub fn verify_prefix(witness_ptr: raw_ptr) -> bool {
+    asm(
+        prefix: PREFIX_BAKO_SIG,
+        witness_ptr: witness_ptr,
+        size: 4,
+        r1,
+    ) {
+        meq r1 witness_ptr prefix size;
+        r1: bool
+    }
+}
+
+fn main() -> bool {
+    let tx_witnesses_count = tx_witnesses_count();
+    let mut count = 0;
+    let mut valid_signers = 0;
+
+    while count < tx_witnesses_count {
+        let mut witness_ptr = __gtf::<raw_ptr>(count, GTF_WITNESS_DATA);
+
+        if (verify_prefix(witness_ptr)) {
+            let tx_bytes = b256_to_ascii_bytes2(tx_id());
+            witness_ptr = witness_ptr.add_uint_offset(4); // skip bako prefix
+            let signature = witness_ptr.read::<SignatureType>();
+            witness_ptr = witness_ptr.add_uint_offset(__size_of::<u64>()); // skip enum size
+            
+            let witnesses_data = witness_ptr.read::<B512>();
+
+            let address: SignatureAddress = match signature {
+                SignatureType::FUEL(header) => {
+                    let address = fuel_verify(witnesses_data, tx_bytes);
+                    SignatureAddress::FUEL(address)
+                },
+                SignatureType::EVM(header) => {
+                    let signature = Signature::Secp256k1(Secp256k1::from(witnesses_data));
+                    let message = Message::from(personal_sign_hash(tx_id()));
+                    let evm_address = signature.evm_address(message).unwrap_or(EvmAddress::from(INVALID_ADDRESS));
+                    SignatureAddress::EVM(evm_address)
+                },
+                _ => {
+                    return false;
+                }
+            };
+
+            if check_signer_exists(address, SIGNER) {
+                valid_signers += 1;
+            }
+        }
+
+        count += 1;
     }
 
-    false
+    valid_signers == 2
+}
+
+pub fn check_signer_exists(
+  signature_address: SignatureAddress,
+  signers: [b256; 2],
+) -> bool {
+  let mut i = 0;
+
+  while i < 2 {
+    match signature_address {
+      SignatureAddress::FUEL(address) => {
+        if Address::from(signers[i]) == address {
+          return true;
+        }
+      },
+      SignatureAddress::EVM(address) => {
+        if EvmAddress::from(signers[i]) == address {
+          return true;
+        }
+      },
+    }
+
+    i += 1;
+  }
+
+  false
 }
 
 const ASCII_MAP: [u8; 16] = [
     48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102
 ];
+
+pub const INVALID_ADDRESS: b256 = 0x0000000000000000000000000000000000000000000000000000000000000001;
+
+pub fn hash_tx_id(value: Bytes) -> b256 {
+  let mut digest = b256::zero();
+  asm(value: value.ptr(), size: value.len(), r1: digest) {
+    s256 r1 value size;
+  };
+  digest
+}
+
+pub fn fuel_verify(signature: B512, tx_bytes: Bytes) -> Address {
+  let tx_fuel = hash_tx_id(tx_bytes);
+  ec_recover_address(signature, tx_fuel).unwrap_or(Address::from(INVALID_ADDRESS))
+}
+
+pub fn b256_to_ascii_bytes2(val: b256) -> Bytes {
+    let bytes = Bytes::from(val);
+    let mut ascii_bytes = Bytes::with_capacity(64);
+    let mut idx = 0;
+
+    while idx < 32 {
+        let b = bytes.get(idx).unwrap();
+        ascii_bytes.push(ASCII_MAP[(b >> 4).as_u64()]);
+        ascii_bytes.push(ASCII_MAP[(b & 15).as_u64()]);
+	    idx = idx + 1;
+    }
+
+    ascii_bytes
+}
 
 fn b256_to_ascii_bytes(val: b256) -> (b256, b256) {
     let bytes = Bytes::from(val);

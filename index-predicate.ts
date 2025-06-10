@@ -1,11 +1,10 @@
 import { launchTestNode } from 'fuels/test-utils';
 import { PredicateTest } from "./artifacts";
 import { ethers } from 'ethers';
-import {Address, arrayify, BN, bn, calculateGasFee, type BytesLike, concat, Provider, ScriptTransactionRequest, transactionRequestify, ZeroBytes32} from 'fuels';
-import { splitSignature } from '@ethersproject/bytes';
-import { hexToBytes } from '@ethereumjs/util';
+import {Address, arrayify, BN, bn, calculateGasFee, type BytesLike, concat, Provider, ScriptTransactionRequest, transactionRequestify, ZeroBytes32, WalletUnlocked, Wallet} from 'fuels';
 import { stringToHex } from 'viem';
 import type { HDNodeWallet } from 'ethers';
+import { bakoCoder, SignatureType } from './coders';
 
 export const getMockedSignatureIndex = (witnesses: BytesLike[]) => {
     const placeholderWitnessIndex = witnesses.findIndex(
@@ -24,15 +23,27 @@ const encodeTxIdUtf8 = (txId: string): string => {
     return stringToHex(txIdNo0x);
 };
 
-const signTransaction = async (wallet: HDNodeWallet, request: ScriptTransactionRequest, chainID: number) => {
-    const txId = request.getTransactionId(chainID);
-    const message = encodeTxIdUtf8(txId);
-    const signature = await wallet.signMessage(arrayify(message));
+const signTransactionEVM = async (wallet: HDNodeWallet, request: ScriptTransactionRequest, chainID: number) => {
+  const txId = request.getTransactionId(chainID);
+  const message = encodeTxIdUtf8(txId);
+  const signature = await wallet.signMessage(arrayify(message));
+  const compactSignature = bakoCoder.encode({
+      type: SignatureType.EVM,
+      signature,
+  });
+  request.addWitness(compactSignature);
+  return request;
+}
 
-    const compactSignature = splitSignature(hexToBytes(signature)).compact;
-    request.witnesses[0] = compactSignature;
-    
-    return request;
+const signTransactionFUEL = async (wallet: WalletUnlocked, request: ScriptTransactionRequest, chainID: number) => {
+  const txId = request.getTransactionId(chainID);
+  const signature = await wallet.signMessage(txId.slice(2));
+  const compactSignature = bakoCoder.encode({
+      type: SignatureType.Fuel,
+      signature,
+  });
+  request.addWitness(compactSignature);
+  return request;
 }
 
 try {
@@ -41,14 +52,16 @@ try {
 
     const chainID = await provider.getChainId();
     const evmWallet = ethers.Wallet.createRandom();
-    const baseAssetId = await provider.getBaseAssetId();
+    const baseAssetId = await provider.getBaseAssetId();    
+
     const evmWalletAddress = new Address(evmWallet.address).toString();
+    const fuelWalletAddress = wallet.address.toString();
 
     // Create the EVM predicate instance
     let evmPredicate = new PredicateTest({
-        data: [0],
+        data: [],
         configurableConstants: {
-            SIGNER: evmWalletAddress
+            SIGNER: [evmWalletAddress, fuelWalletAddress]
         },
         provider,
     });
@@ -73,15 +86,15 @@ try {
     transaction = request as ScriptTransactionRequest;
 
     // Sign the transaction
-    transaction = await signTransaction(evmWallet, transaction, chainID);
+    transaction = await signTransactionEVM(evmWallet, transaction, chainID);
+    transaction = await signTransactionFUEL(wallet, transaction, chainID);
     transaction = await provider.estimatePredicates(transaction);
 
+    // Send the transaction
+    const response = await evmPredicate.sendTransaction(transaction);
+    const result = await response.waitForResult();
 
-    // // Send the transaction
-    // const response = await evmPredicate.sendTransaction(transaction);
-    // const result = await response.waitForResult();
-
-    // console.log("TX executed:", result.id);
+    console.log("TX executed:", result.id);
 } catch (e) {
     console.log(e.message);
 }
@@ -151,16 +164,17 @@ async function prepareTransaction(
 }
 
 async function getMaxPredicateGasUsed(provider: Provider): Promise<BN> {
-const fakeAccount = ethers.Wallet.createRandom();
+const fakeAccountEVM = ethers.Wallet.createRandom();
+const fakeAccountFUEL = Wallet.generate();
 const chainId = await provider.getChainId();
 const fakePredicate = new PredicateTest({
-    data: [0],
+    data: [],
     configurableConstants: {
-        SIGNER: new Address(fakeAccount.address).toString()
+        SIGNER: [new Address(fakeAccountEVM.address).toString(), fakeAccountFUEL.address.toString()]
     },
     provider,
 });
-const request = new ScriptTransactionRequest();
+let request = new ScriptTransactionRequest();
 request.addCoinInput({
     id: ZeroBytes32,
     assetId: ZeroBytes32,
@@ -170,10 +184,9 @@ request.addCoinInput({
     txCreatedIdx: bn(),
 });
 fakePredicate.populateTransactionPredicateData(request);
-const txId = request.getTransactionId(chainId);
 //
-const signature = await fakeAccount.signMessage(txId);
-request.witnesses = [signature];
+request = await signTransactionEVM(fakeAccountEVM, request, chainId);
+request = await signTransactionFUEL(fakeAccountFUEL, request, chainId);
 //
 await fakePredicate.provider.estimatePredicates(request);
 const predicateInput = request.inputs[0];
